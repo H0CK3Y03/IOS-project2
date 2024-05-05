@@ -142,7 +142,7 @@ int main(int argc, char *argv[]) {
         struct_destroy();
         return 1;
     }
-    if(bus_id == 0) {
+    else if(bus_id == 0) {
         bus();
     }
     for(int i = 0; i < shared_t -> L_count; i++) {
@@ -152,11 +152,10 @@ int main(int argc, char *argv[]) {
             struct_destroy();
             return 1;
         }
-        if(skier_id == 0) {
+        else if(skier_id == 0) {
             skier(i + 1);
         }
     }
-
     struct_destroy();
 
     return 0;
@@ -189,11 +188,11 @@ void struct_init(int Z) {
 }
 
 void struct_destroy() {
-    semaphore_destroy();
-    unmap_memory();
     if(shared_t -> file != NULL) {
         fclose(shared_t -> file);
     }
+    semaphore_destroy();
+    unmap_memory();
 }
 
 void semaphore_init(int Z) {
@@ -320,7 +319,7 @@ void unmap_memory() {
             exit(1);
         }
     }
-    if(munmap(shared_t -> stops_mutex, sizeof(sem_t *)) != 0) {
+    if(munmap(shared_t -> stops_mutex, (shared_t -> Z_count) * sizeof(sem_t *)) != 0) {
         fprintf(stderr, "ERROR: Memory unmapping failed.\n");
         exit(1);
     }
@@ -427,7 +426,7 @@ void skier(int position) {
     custom_print("L %d: started\n", position);
     rand_sleep(shared_t -> skier_max_time);
     // stop that skier will go to (index)
-    int stop = ((rand() + position) % (shared_t -> Z_count)) + 1;
+    int stop = ((rand() + getpid()) % (shared_t -> Z_count)) + 1;
     custom_print("L %d: arrived to %d\n", position, stop);
     // increment number of waiting skiers at current stop
     (shared_t -> stops_waiting[(stop - 1)])++;
