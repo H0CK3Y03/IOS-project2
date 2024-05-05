@@ -189,11 +189,11 @@ void struct_init(int Z) {
 }
 
 void struct_destroy() {
+    semaphore_destroy();
     unmap_memory();
     if(shared_t -> file != NULL) {
         fclose(shared_t -> file);
     }
-    semaphore_destroy();
 }
 
 void semaphore_init(int Z) {
