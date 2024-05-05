@@ -28,11 +28,11 @@ typedef struct shared_vars {
 shared_vars *shared_t;
 
 // Function prototypes
-void struct_init();
+void struct_init(int);
 void struct_destroy();
-void semaphore_init();
+void semaphore_init(int);
 void semaphore_destroy();
-void map_memory();
+void map_memory(int);
 void unmap_memory();
 void custom_print(char *, ...);
 void bus();
@@ -121,11 +121,8 @@ int main(int argc, char *argv[]) {
 
     // **********End of argument parsing**********
 
-    // initialize random seed
+    struct_init(Z);
     srand(time(NULL));
-
-    map_memory();
-    struct_init();
 
     // initialize shared variables
     shared_t -> L_count = L;
@@ -134,29 +131,31 @@ int main(int argc, char *argv[]) {
     shared_t -> skier_max_time = TL;
     shared_t -> bus_max_time = TB;
 
-    shared_t -> stops_waiting = malloc(sizeof(int) * Z);
-    if(shared_t -> stops_waiting == NULL) {
-        fprintf(stderr, "ERROR: Failed to allocate memory for stops.\n");
-        struct_destroy();
-        return 1;
-    }
     // initialize stops to 0
     for(int i = 0; i < Z; i++) {
         shared_t -> stops_waiting[i] = 0;
     }
 
     pid_t bus_id = fork();
-    if(bus_id == 0) {
+    if(bus_id == -1) {
+        fprintf(stderr, "ERROR: fork() failed!\n");
+        struct_destroy();
+        return 1;
+    }
+    else if(bus_id == 0) {
         bus();
     }
     for(int i = 0; i < shared_t -> L_count; i++) {
         pid_t skier_id = fork();
-        if(skier_id == 0) {
-            skier(i+1);
+        if(skier_id == -1) {
+            fprintf(stderr, "ERROR: fork() failed!\n");
+            struct_destroy();
+            return 1;
+        }
+        else if(skier_id == 0) {
+            skier(i + 1);
         }
     }
-
-    free(shared_t -> stops_waiting);
     struct_destroy();
 
     return 0;
@@ -165,34 +164,12 @@ int main(int argc, char *argv[]) {
 // **********Function definitions**********
 
 // initializes the struct of global/shared variables
-void struct_init() {
-    shared_t = malloc(sizeof(shared_vars));
-    if(shared_t == NULL) {
-        fprintf(stderr, "ERROR: Unable to allocate memory for global variables.\n");
-        exit(1);
-    }
+void struct_init(int Z) {
     // initializes all global variables
-    shared_t -> A = malloc(sizeof(int));
-    if(shared_t -> A == NULL) {
-        fprintf(stderr, "ERROR: Memory allocation failed.\n");
-        struct_destroy();
-        exit(1);
-    }
-    *(shared_t -> A) = 1;
+    map_memory(Z);
+    *(shared_t -> A) = 0;
     shared_t -> L_count = 0;
-    shared_t -> L_boarded = malloc(sizeof(int));
-    if(shared_t -> A == NULL) {
-        fprintf(stderr, "ERROR: Memory allocation failed.\n");
-        struct_destroy();
-        exit(1);
-    }
     *(shared_t -> L_boarded) = 0;
-    shared_t -> L_skiing = malloc(sizeof(int));
-    if(shared_t -> A == NULL) {
-        fprintf(stderr, "ERROR: Memory allocation failed.\n");
-        struct_destroy();
-        exit(1);
-    }
     *(shared_t -> L_skiing) = 0;
     shared_t -> Z_count = 0;
     shared_t -> skier_max_time = 0;
@@ -207,33 +184,19 @@ void struct_init() {
         struct_destroy();
         exit(1);
     }
+    semaphore_init(Z);
 }
 
 void struct_destroy() {
-    unmap_memory();
     if(shared_t -> file != NULL) {
         fclose(shared_t -> file);
     }
-
-    if(shared_t -> stops_waiting != NULL) {
-        free(shared_t -> stops_waiting);
-    }
-
     semaphore_destroy();
-    
-    if(shared_t != NULL) {
-        free(shared_t);
-    }
+    unmap_memory();
 }
 
-void semaphore_init() {
+void semaphore_init(int Z) {
     // Initialize bus_mutex semaphore
-    shared_t -> bus_mutex = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
-    if(shared_t -> bus_mutex == MAP_FAILED) {
-        fprintf(stderr, "ERROR: Memory mapping failed.\n");
-        struct_destroy();
-        exit(1);
-    }
     if(sem_init(shared_t -> bus_mutex, 1, 0) == -1) {
         fprintf(stderr, "ERROR: Failed to initialize a semaphore!\n");
         struct_destroy();
@@ -241,12 +204,6 @@ void semaphore_init() {
     }
 
     // Initialize all_skiers_finished semaphore
-    shared_t -> all_skiers_finished = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
-    if(shared_t -> all_skiers_finished == MAP_FAILED) {
-        fprintf(stderr, "ERROR: Memory mapping failed.\n");
-        struct_destroy();
-        exit(1);
-    }
     if(sem_init(shared_t -> all_skiers_finished, 1, 0) == -1) {
         fprintf(stderr, "ERROR: Failed to initialize a semaphore!\n");
         struct_destroy();
@@ -254,32 +211,14 @@ void semaphore_init() {
     }
 
     // Initialize output_mutex semaphore
-    shared_t -> output_mutex = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
-    if(shared_t -> output_mutex == MAP_FAILED) {
-        fprintf(stderr, "ERROR: Memory mapping failed.\n");
-        struct_destroy();
-        exit(1);
-    }
-    if(sem_init(shared_t -> output_mutex, 1, 0) == -1) {
+    if(sem_init(shared_t -> output_mutex, 1, 1) == -1) {
         fprintf(stderr, "ERROR: Failed to initialize a semaphore!\n");
         struct_destroy();
         exit(1);
     }
 
     // Allocate and initialize stops_mutex array of semaphores
-    shared_t -> stops_mutex = mmap(NULL, sizeof(sem_t *) * shared_t -> Z_count, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
-    if(shared_t -> stops_mutex == MAP_FAILED) {
-        fprintf(stderr, "ERROR: Memory mapping failed.\n");
-        struct_destroy();
-        exit(1);
-    }
-    for(int i = 0; i < shared_t -> Z_count; i++) {
-        shared_t -> stops_mutex[i] = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
-        if(shared_t -> stops_mutex[i] == MAP_FAILED) {
-            fprintf(stderr, "ERROR: Memory mapping failed.\n");
-            struct_destroy();
-            exit(1);
-        }
+    for(int i = 0; i < Z; i++) {
         if(sem_init(shared_t -> stops_mutex[i], 1, 0) == -1) {
             fprintf(stderr, "ERROR: Failed to initialize a semaphore!\n");
             struct_destroy();
@@ -300,75 +239,71 @@ void semaphore_destroy() {
         sem_destroy(shared_t -> output_mutex);
     }
     if(shared_t -> stops_mutex != NULL) {
-        for(int i = 0; i < (shared_t -> Z_count) - 1; i++) {
+        for(int i = 0; i < shared_t -> Z_count; i++) {
             if(shared_t -> stops_mutex[i] != NULL) {
                 sem_destroy(shared_t -> stops_mutex[i]);
             }
         }
     }   
-
-    if(shared_t -> stops_mutex != NULL) {
-        free(shared_t -> stops_mutex);
-    } 
 }
 
-void map_memory() {
-    shared_t = (shared_vars *)mmap(NULL, sizeof(shared_vars), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
+void map_memory(int Z) {
+    shared_t = (shared_vars *)mmap(NULL, sizeof(shared_vars), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if(shared_t == MAP_FAILED) {
         fprintf(stderr, "ERROR: Memory mapping failed.\n");
         struct_destroy();
         exit(1);
     }
-    shared_t -> A = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
+    shared_t -> A = (int *)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if(shared_t -> A == MAP_FAILED) {
         fprintf(stderr, "ERROR: Memory mapping failed.\n");
         struct_destroy();
         exit(1);
     }
-    shared_t -> L_boarded = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
+    shared_t -> L_boarded = (int *)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if(shared_t -> L_boarded == MAP_FAILED) {
         fprintf(stderr, "ERROR: Memory mapping failed.\n");
         struct_destroy();
         exit(1);
     }
-    shared_t -> L_skiing = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
+    shared_t -> L_skiing = (int *)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if(shared_t -> L_skiing == MAP_FAILED) {
         fprintf(stderr, "ERROR: Memory mapping failed.\n");
         struct_destroy();
         exit(1);
     }
-    shared_t -> stops_waiting = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
+    shared_t -> stops_waiting = (int *)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if(shared_t -> stops_waiting == MAP_FAILED) {
         fprintf(stderr, "ERROR: Memory mapping failed.\n");
         struct_destroy();
         exit(1);
     }
-    shared_t -> bus_mutex = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
+    shared_t -> bus_mutex = (sem_t *)mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if(shared_t -> bus_mutex == MAP_FAILED) {
         fprintf(stderr, "ERROR: Memory mapping failed.\n");
         struct_destroy();
         exit(1);
     }
-    shared_t -> all_skiers_finished = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
+    shared_t -> all_skiers_finished = (sem_t *)mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if(shared_t -> all_skiers_finished == MAP_FAILED) {
         fprintf(stderr, "ERROR: Memory mapping failed.\n");
         struct_destroy();
         exit(1);
     }
-    shared_t -> output_mutex = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
+    shared_t -> output_mutex = (sem_t *)mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if(shared_t -> output_mutex == MAP_FAILED) {
         fprintf(stderr, "ERROR: Memory mapping failed.\n");
         struct_destroy();
         exit(1);
     }
-    shared_t -> stops_mutex = mmap(NULL, sizeof(sem_t *), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
+    shared_t -> stops_mutex = (sem_t **)mmap(NULL, (Z * sizeof(sem_t *)), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if(shared_t -> stops_mutex == MAP_FAILED) {
         fprintf(stderr, "ERROR: Memory mapping failed.\n");
         struct_destroy();
         exit(1);
     }
-    for(int i = 0; i < shared_t -> Z_count; i++) {
-        shared_t -> stops_mutex[i] = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
+    for(int i = 0; i < Z; i++) {
+        shared_t -> stops_mutex[i] = (sem_t *)mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
         if(shared_t -> stops_mutex[i] == MAP_FAILED) {
             fprintf(stderr, "ERROR: Memory mapping failed.\n");
             struct_destroy();
@@ -384,7 +319,7 @@ void unmap_memory() {
             exit(1);
         }
     }
-    if(munmap(shared_t -> stops_mutex, sizeof(sem_t *)) != 0) {
+    if(munmap(shared_t -> stops_mutex, (shared_t -> Z_count) * sizeof(sem_t *)) != 0) {
         fprintf(stderr, "ERROR: Memory unmapping failed.\n");
         exit(1);
     }
@@ -423,18 +358,20 @@ void unmap_memory() {
 }
 
 void custom_print(char *output, ...) {
+    // before posting the semaphore it segfaults somewhere
     sem_wait(shared_t -> output_mutex); // waits for output to be done
+    (*(shared_t -> A))++;
     va_list args;
     va_start(args, output);
     fprintf(shared_t -> file, "%d: ", *(shared_t -> A));
     vfprintf(shared_t -> file, output, args);
     fflush(shared_t -> file);
     va_end(args);
-    (*(shared_t -> A))++;
     sem_post(shared_t -> output_mutex); // signals that output is done
 }
 
 void bus() {
+    // initialize random seed
     custom_print("BUS: started\n");
     int stop = 1;
     // while all skiers aren't skiing
@@ -442,31 +379,41 @@ void bus() {
         rand_sleep(shared_t -> bus_max_time);
         // prints and increments the stop variable
         custom_print("BUS: arrived to %d\n", stop);
-        for(int i = 0; (i < shared_t -> stops_waiting[stop]) && i < shared_t -> K_capacity; i++) {
+        // if no-one is waiting at the stop, go
+        int skier_count = shared_t -> stops_waiting[(stop - 1)];
+        if(skier_count == 0) {
+            sem_post(shared_t -> all_skiers_finished);
+        }
+        for(int i = 0; (i < skier_count) && (i < shared_t -> K_capacity); i++) {
             // allows the skier to board
-            sem_post(shared_t -> stops_mutex[stop]);
+            sem_post(shared_t -> stops_mutex[(stop - 1)]);
             // increments the number of skiers that have boarded the skibus
             (*(shared_t -> L_boarded))++;
+            (shared_t -> stops_waiting[(stop - 1)])--;
         }
         // resets the number of waiting skiers at the stop
-        shared_t -> stops_waiting[stop] = 0;
+        shared_t -> stops_waiting[(stop - 1)] = 0;
         sem_wait(shared_t -> all_skiers_finished);
         custom_print("BUS: leaving %d\n", stop);
         rand_sleep(shared_t -> bus_max_time);
         // goes to next bus stop
         stop++;
-        stop %= shared_t -> Z_count;
+        // +2 to account for the final stop
+        stop %= (shared_t -> Z_count + 2);
+        if(stop == 0) {
+            stop++;
+        }
         // if the skibus is on the final stop
-        if(stop == (shared_t -> Z_count) - 1) {
+        if(stop == (shared_t -> Z_count) + 1) {
             custom_print("BUS: arrived to final\n");
             // all skiers unboard
-            for(int i = 0; i < *(shared_t -> L_boarded); i++) {
+            int on_board = *(shared_t -> L_boarded);
+            for(int i = 0; i < on_board; i++) {
                 sem_post(shared_t -> bus_mutex);
             }
             sem_wait(shared_t -> all_skiers_finished);
             custom_print("BUS: leaving final\n");
-            stop++;
-            stop %= shared_t -> Z_count;
+            stop = 1;
         }
     }
     custom_print("BUS: finish\n");
@@ -474,31 +421,34 @@ void bus() {
 }
 // postion -> current position of skier in total
 void skier(int position) {
+    // initialize random seed
     int order = 0; // which position the skier is in on the bus stop
     rand_sleep(shared_t -> skier_max_time);
     custom_print("L %d: started\n", position);
     rand_sleep(shared_t -> skier_max_time);
     // stop that skier will go to (index)
-    int stop = rand() % (shared_t -> Z_count);
+    int stop = ((rand() + getpid()) % (shared_t -> Z_count)) + 1;
     custom_print("L %d: arrived to %d\n", position, stop);
     // increment number of waiting skiers at current stop
-    shared_t -> stops_waiting[stop]++;
+    (shared_t -> stops_waiting[(stop - 1)])++;
     // set position of skier on the bus stop
-    order = shared_t -> stops_waiting[stop];
-    // wait untill bus arrives
-    sem_wait(shared_t -> stops_mutex[stop]);
+    order = shared_t -> stops_waiting[(stop - 1)];
+    // wait until bus arrives
+    sem_wait(shared_t -> stops_mutex[(stop - 1)]);
     custom_print("L %d: boarding\n", position);
+    order--;
     // send signal to bus that all skiers on this stop have boarded
-    if(order == shared_t -> stops_waiting[stop]) {
+    if(order == 0) {
         sem_post(shared_t -> all_skiers_finished);
     }
     // waits until bus arrives to final bus stop
     sem_wait(shared_t -> bus_mutex);
     custom_print("L %d: going to ski\n", position);
+    (*(shared_t -> L_skiing))++;
+    (*(shared_t -> L_boarded))--;
     // sends a signal that all skiers have gone skiing
-    if(order == shared_t -> stops_waiting[stop]) {
+    if(*(shared_t -> L_boarded) == 0) {
         sem_post(shared_t -> all_skiers_finished);
-        (*(shared_t -> L_skiing))++;
     }
     exit(0);
 }
